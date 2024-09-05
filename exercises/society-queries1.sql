@@ -156,7 +156,7 @@ select concat(last_name, ' ', first_name) as "Nom Prénom" from employee ;
 -- 3.10 CHAINES DE CARACTERE ***
 
 -- 28. Afficher les 5 premières lettres du nom des employés 
-select substring(last_name, 0, 6) from employee;
+select substring(last_name, 1, 5) from employee;
 
 -- 29. Afficher le nom et le rang de la lettre « r » dans le nom des 
 -- employés. 

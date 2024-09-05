@@ -3,6 +3,9 @@
 -- 1. Affichage de tous les employés et leur département (requête ci-dessus).
 select * from employee e join department d on e.department_id = d.id;
 
+select * from employee join department d on department_id = d.id;
+
+
 -- **********************************************************************************
 
 -- 3.1 SELECT ET JOINTURE ***
@@ -104,52 +107,82 @@ select e.last_name, e.title, e.salary from employee e where (e.title, e.salary) 
 -- 12. Rechercher le numéro de département, le nom du département, le nom des 
 -- employés, en affichant aussi les départements dans lesquels il n'y a personne, 
 -- classés par numéro de département. 
-
+select d.id, d.name, e.last_name
+from department as d
+left join employee as e
+on d.id = e.department_id
+order by d.id;
 
 -- **********************************************************************************
 
 -- 3.5 UTILISATION DE FONCTIONS D’AGREGATION (OU DE GROUPE)
 
 -- 13. Calculer la moyenne des salaires des secrétaires (requête fournie ci-dessous) 
-
+select avg(salary)
+from employee 
+where title like 'secrétaire';
 
 -- **********************************************************************************
 
 -- 3.6 LES GROUPES ***
 
 -- 14. Calculer le nombre d’employé de chaque titre.
+select title, count(*) from employee group by title;
+
 
 -- 15. Calculer la moyenne des salaires et leur somme, par région.
-
+select region_id, avg(salary), sum(salary)
+from employee 
+join department as d
+on department_id = d.id
+group by region_id;
 
 -- **********************************************************************************
 
 -- 3.7 LA CLAUSE « HAVING » ***
 
 -- 16. Afficher les numéros des départements ayant au moins 3 employés. 
-
+select department_id, count(*)
+from employee 
+group by department_id
+having count(*)>=3;
 
 -- 17. Afficher les lettres qui sont l'initiale d'au moins trois employés. 
-
+select substring(last_name,1,1), count(*)
+from employee 
+group by substring(last_name,1,1)
+having count(*)>=3;
 
 -- 18. Rechercher le salaire maximum et le salaire minimum parmi tous les 
 -- salariés et l'écart entre les deux. 
-
+select max(salary), min(salary), max(salary)-min(salary) as "Ecart de salaire" from employee;
 
 -- 19. Rechercher le nombre de titres différents. 
-
+select count(distinct title)
+from employee;
 
 -- 20. Pour chaque titre, compter le nombre d'employés possédant ce titre. 
-
+select distinct title, count(*)
+from employee
+group by distinct title;
 
 -- 21. Pour chaque nom de département, afficher le nom du département et 
 -- le nombre d'employés. 
-
+select d.name, count(*)
+from employee e
+join department d 
+on d.id = e.department_id
+group by d.name;
 
 -- 22. Rechercher les titres et la moyenne des salaires par titre dont la 
 -- moyenne est supérieure à la moyenne des salaires des « Représentant ». 
-
+select title, avg(salary)
+from employee
+group by title
+having avg(salary) > (select avg(e2.salary)from employee as e2 where e2.title like 'représentant');
 
 -- 23. Rechercher le nombre de salaires renseignés et le nombre de taux de 
 -- commission renseignés. 
+select count(salary) "Nb Salaires",count(commission_rate) as "Nb taux"
+from employee;
 
