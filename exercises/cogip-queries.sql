@@ -440,45 +440,79 @@ alter table "user"
 add column connexion_attempt integer default 0,
 add column blocked_account boolean default false;
 
-CREATE OR REPLACE function user_connection(user_email text, user_password text) 
- RETURNS boolean 
- LANGUAGE plpgsql 
-as  $function$ 
-declare  
-    user_id_reference int; -- l'identifiant de l'utilisateur récupéré en base de données 
-    user_password_reference text; -- le mot de passe de l'utilisateur récupéré en base de données 
-    user_exists boolean; -- un indicateur d'existence de l'utilisateur 
-    hashed_password text; -- va contenir le mot de passe haché 
-begin 
- 
-    -- vérification de l'existence de l'utilisateur 
-    user_exists = exists(select * 
-                        from "user" u 
-                        where u.email like user_email); 
- 
-    -- si l'utilisateur existe, on vérifie son mot de passe 
-    if user_exists then 
-        -- récupération du mot de passe stocké en BDD 
-        select "password"  
-        into user_password_reference 
-        from "user" u 
-        where u.email like user_email; 
-     
-        -- calcul du hash du mot de passe passé en paramètre et vérification avec le hash en BDD 
-        hashed_password = encode(digest(user_password, 'sha1'), 'hex'); 
-        if hashed_password like user_password_reference then 
-            return true; 
-        end if; 
-    end if; 
- 
-    -- alert pour l'utilisateur 
-    raise notice 'L''utilisateur ayant pour email % n''existe pas en base de données.', 
-user_email; 
-    return false; 
-END 
-$function$; 
+CREATE OR REPLACE FUNCTION user_connection(user_email TEXT, user_password TEXT) 
+RETURNS BOOLEAN 
+LANGUAGE plpgsql 
+AS $function$ 
+DECLARE  
+    user_id_reference INT;                -- Identifiant de l'utilisateur récupéré en base de données 
+    user_password_reference TEXT;         -- Le mot de passe de l'utilisateur récupéré en base de données 
+    user_exists BOOLEAN;                  -- Indicateur d'existence de l'utilisateur 
+    hashed_password TEXT;                 -- Contient le mot de passe haché 
+    connexion_attempts INT;               -- Nombre de tentatives de connexion infructueuses 
+    blocked_account BOOLEAN;              -- Indicateur si le compte est bloqué ou non 
+BEGIN 
+    -- Vérification de l'existence de l'utilisateur 
+    SELECT u."password", u.connexion_attempt, u.blocked_account 
+    INTO user_password_reference, connexion_attempts, blocked_account 
+    FROM "user" u 
+    WHERE u.email = user_email; 
+    
+    -- Si l'utilisateur n'existe pas ou si le compte est bloqué 
+    IF NOT FOUND THEN
+        RAISE NOTICE 'L''utilisateur ayant pour email % n''existe pas.', user_email;
+        RETURN FALSE;
+    ELSIF blocked_account THEN
+        RAISE NOTICE 'Le compte pour l''utilisateur % est bloqué.', user_email;
+        RETURN FALSE;
+    END IF;
 
-select user_connection('chloe.boivin@outlook.com','motdepassss');
+    -- Calcul du hash du mot de passe passé en paramètre 
+    hashed_password = encode(digest(user_password, 'sha1'), 'hex'); 
+    
+    -- Vérification du mot de passe 
+    IF hashed_password = user_password_reference THEN 
+        -- Connexion réussie : réinitialisation du compteur de tentatives et mise à jour de la date de connexion
+        UPDATE "user" 
+        SET last_connection = NOW(), 
+            connexion_attempt = 0 
+        WHERE email = user_email;
+        
+        RETURN TRUE; 
+    ELSE 
+        -- Si le mot de passe est incorrect, incrémenter le compteur de tentatives 
+        connexion_attempts := connexion_attempts + 1;
+
+		-- Mettre à jour le compteur de tentatives avant l'affichage
+        UPDATE "user" 
+        SET connexion_attempt = connexion_attempts 
+        WHERE email = user_email;
+
+		-- Afficher le nombre de tentatives après la mise à jour
+		RAISE NOTICE 'Total tentatives:%', connexion_attempts; 
+
+        -- Si le nombre de tentatives atteint 3, bloquer le compte 
+        IF connexion_attempts >= 3 THEN 
+            UPDATE "user" 
+            SET blocked_account = TRUE 
+            WHERE email = user_email;
+
+            RAISE NOTICE 'Le compte de l''utilisateur % est maintenant bloqué après 3 tentatives infructueuses.', user_email;
+        END IF;
+        
+        RETURN FALSE; 
+    END IF;
+
+END 
+$function$;
+
+-- BONNE REQUETE BDD:
+select user_connection('chloe.boivin@outlook.com','motdepassss'),connexion_attempt, blocked_account from "user";
+
+-- EX MAUVAIS MAIL:
+select user_connection('chloe.boivin@outlook.con','motdepassss'),connexion_attempt, blocked_account from "user";
+-- EX MAUVAIS MDP:
+select user_connection('chloe.boivin@outlook.com','motdetassss'),connexion_attempt, blocked_account from "user";
 
 
 -- **********************************************************************************
@@ -486,12 +520,93 @@ select user_connection('chloe.boivin@outlook.com','motdepassss');
 
 -- 3.  CREATION DE DECLENCHEURS (TRIGGERS) 
 
+-- 3.2 DECLENCHEURS AFFICHANT DES MESSAGES
+
+-- 3.2.1 Message avant un "INSERT"
+
+-- 3.2.1.2 Création de la fonction
+
+CREATE OR REPLACE FUNCTION display_message_on_supplier_insert() 
+ RETURNS trigger
+ LANGUAGE plpgsql 
+AS $$ 
+BEGIN 
+  raise notice '" Un ajout de fournisseur va être fait. Le nouveau fournisseur est % ."', NEW.name; 
+  return NEW;
+ 
+END; 
+$$
+
+-- 3.2.1.3 Création du déclencheur
+
+create or replace trigger before_insert_supplier -- "before_insert_supplier" est le nom du déclencheur 
+before insert -- indication sur le type d'évènement du déclencheur 
+on public.supplier -- nom de la table concernée 
+for each row -- quand se déclencher ? ROW ou statement (explication ci-dessous) 
+execute function display_message_on_supplier_insert(); -- appel de la fonction lorsque le déclencheur s'active
+
+insert into public.supplier(id,"name",address,postal_code,city,contact_name,satisfaction_index) values ('77777','Super','Rue de rue','33333','Bdx','Gilgert F','7');
+
+-- => " Un ajout de fournisseur va être fait. Le nouveau fournisseur est Super ."
+
+
+--3.2.2 Message après un "UPDATE"
+
+CREATE OR REPLACE FUNCTION display_message_on_supplier_update() 
+ RETURNS trigger 
+ LANGUAGE plpgsql 
+AS $$ 
+BEGIN 
+  raise notice '"Mise à jour de la table des fournisseurs. Le nouveau fournisseur est % . Le précédent était %."', NEW.name, OLD.name; 
+  return null;
+ 
+END; 
+$$
+
+create or replace trigger before_update_supplier -- "before_insert_supplier" est le nom du déclencheur 
+after update -- indication sur le type d'évènement du déclencheur 
+on public.supplier -- nom de la table concernée 
+for each row -- quand se déclencher ? ROW ou statement (explication ci-dessous) 
+execute function display_message_on_supplier_update(); -- appel de la fonction lorsque le déclencheur s'active
+
+UPDATE public.supplier
+SET
+    "name" = 'Super 2',
+    address = 'Rue de rue',
+    postal_code = '33333',
+    city = 'Bdx',
+    contact_name = 'Gilgert F',
+    satisfaction_index = 7
+WHERE id = 1 ;
+
+
+-- **********************************************************************************
+
 -- 3.3 DECLENCHEURS EMPECHANT UNE REQUETE
+
 -- 3.3.1 Empêcher la suppression de l’administrateur principal 
 
 -- 11. Créez un déclencheur de type « before delete » appelant cette nouvelle 
 -- fonction  
+CREATE OR REPLACE function check_user_delete() 
+ RETURNS trigger 
+ LANGUAGE plpgsql 
+AS $function$ 
+begin 
+    if old.role = 'MAIN_ADMIN' then 
+        raise exception 'Impossible de supprimer l`''utilisateur %. Il s''agit de l''administrateur principal.', old.id; 
+    end if; 
+  return OLD; 
+END; 
+$function$
 
+create or replace trigger before_user_delete -- "before_insert_supplier" est le nom du déclencheur 
+before delete -- indication sur le type d'évènement du déclencheur 
+on public."user" -- nom de la table concernée 
+for each row -- quand se déclencher ? ROW ou statement (explication ci-dessous) 
+execute function check_user_delete(); -- appel de la fonction lorsque le déclencheur s'active
+
+delete from "user" where "role" like 'MAIN_ADMIN';
 
 -- **********************************************************************************
 
@@ -499,7 +614,25 @@ select user_connection('chloe.boivin@outlook.com','motdepassss');
 
 -- 12. Implémentez  une fonction ainsi que son déclencheur permettant d’empêcher ce type 
 -- de suppression. 
+CREATE OR REPLACE function check_orderline_delete() 
+ RETURNS trigger 
+ LANGUAGE plpgsql 
+AS $function$ 
+begin 
+    if (old.ordered_quantity > old.delivered_quantity) 
+	then raise exception '"Impossible de supprimer, cette commande n''est pas encore complète."'; 
+    end if; 
+  return null; 
+END; 
+$function$
 
+create or replace trigger before_user_delete_orderline -- "before_insert_supplier" est le nom du déclencheur 
+before delete -- indication sur le type d'évènement du déclencheur 
+on public.order_line -- nom de la table concernée 
+for each row -- quand se déclencher ? ROW ou statement (explication ci-dessous) 
+execute function check_orderline_delete(); -- appel de la fonction lorsque le déclencheur s'active
+
+delete from order_line where ordered_quantity > delivered_quantity;
 
 -- **********************************************************************************
 
