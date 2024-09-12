@@ -641,6 +641,87 @@ delete from order_line where ordered_quantity > delivered_quantity;
 -- 3.4.1 Modification des articles à commander
 
 -- 13. Ecrivez le code de ce nouveau déclencheur 
+-- ETAPE 1: création de la table
+CREATE TABLE public.items_to_order(
+	id SERIAL primary KEY,
+	item_id  integer not null,
+	date_update timestamp,
+	quantity integer not null,
+	foreign key (item_id) references item(id)
+);
+
+-- ETAPE 2: création d'une fonction qui met à jour la table
+
+CREATE OR REPLACE FUNCTION display_message_on_stock_update() 
+ RETURNS trigger 
+ LANGUAGE plpgsql 
+AS $$ 
+BEGIN 
+	if new.stock < new.stock_alert
+	then insert into public.items_to_order(item_id, date_update, quantity)values(new.id,now(),new.stock);
+	raise notice '"L''article % a atteint son stock d''alerte."', new.id; 
+	end if;
+
+  return new;
+ 
+END; 
+$$
+
+create or replace trigger before_stock_update_supplier -- "before_insert_supplier" est le nom du déclencheur 
+before update -- indication sur le type d'évènement du déclencheur 
+on public.item -- nom de la table concernée 
+for each row -- quand se déclencher ? ROW ou statement (explication ci-dessous) 
+execute function display_message_on_stock_update(); -- appel de la fonction lorsque le déclencheur s'active
+
+UPDATE public.item
+set stock = 19
+where id = 0;
+
+
+-- ETAPE 3: Création du déclencheur
+
+create or replace trigger after_stock_update_supplier -- "before_insert_supplier" est le nom du déclencheur 
+after update -- indication sur le type d'évènement du déclencheur 
+on public.item -- nom de la table concernée 
+for each row -- quand se déclencher ? ROW ou statement (explication ci-dessous) 
+execute function display_message_on_stock_update(); -- appel de la fonction lorsque le déclencheur s'active
+
+UPDATE public.item
+set stock = 10
+where id = 0;
+
+-- ETAPE 4: Empêcher la modification si la valeur est trop faible
+
+CREATE OR REPLACE FUNCTION display_message_on_stock_update() 
+ RETURNS trigger 
+ LANGUAGE plpgsql 
+AS $$ 
+BEGIN 
+	if new.stock < 0
+	then raise exception '"Le stock ne peut pas être négatif."';
+	return null;
+	end if;
+
+	if new.stock < new.stock_alert
+	then insert into public.items_to_order(item_id, date_update, quantity)values(new.id,now(),new.stock);
+	raise notice '"L''article % a atteint son stock d''alerte."', new.id; 
+	end if;
+
+  return new;
+ 
+END; 
+$$
+
+create or replace trigger after_stock_update_supplier -- "before_insert_supplier" est le nom du déclencheur 
+after update -- indication sur le type d'évènement du déclencheur 
+on public.item -- nom de la table concernée 
+for each row -- quand se déclencher ? ROW ou statement (explication ci-dessous) 
+execute function display_message_on_stock_update(); -- appel de la fonction lorsque le déclencheur s'active
+
+UPDATE public.item
+set stock = -2
+where id = 0;
+
 
 
 -- **********************************************************************************
@@ -649,3 +730,45 @@ delete from order_line where ordered_quantity > delivered_quantity;
 
 -- 14. Inspirez-vous du code fourni pour créer votre table et développer le déclencheur 
 -- approprié.
+
+CREATE TABLE item_audit (
+    audit_id SERIAL PRIMARY KEY,          -- Identifiant unique de l'enregistrement d'audit
+    item_id INT NOT NULL,                 -- Identifiant de l'élément modifié dans la table 'item'
+    operation_type VARCHAR(10),           -- Type d'opération (INSERT, UPDATE, DELETE)
+    operation_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Horodatage de l'opération
+    executed_by VARCHAR(100)              -- Utilisateur ayant effectué l'opération
+);
+
+CREATE OR REPLACE FUNCTION audit_item_changes() 
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP = 'INSERT') THEN
+        -- Enregistrement d'une opération INSERT
+        INSERT INTO item_audit(item_id, operation_type, executed_by)
+        VALUES (NEW.id, TG_OP, SESSION_USER);
+        RETURN NEW;
+
+    ELSIF (TG_OP = 'UPDATE') THEN
+        -- Enregistrement d'une opération UPDATE
+        INSERT INTO item_audit(item_id, operation_type, executed_by)
+        VALUES (OLD.id, TG_OP, SESSION_USER);
+        RETURN NEW;
+
+    ELSIF (TG_OP = 'DELETE') THEN
+        -- Enregistrement d'une opération DELETE
+        INSERT INTO item_audit(item_id, operation_type, executed_by)
+        VALUES (OLD.id, TG_OP, SESSION_USER);
+        RETURN OLD;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger pour INSERT, UPDATE et DELETE
+CREATE TRIGGER audit_item_changes_trigger
+AFTER INSERT OR UPDATE OR DELETE ON item
+FOR EACH ROW
+EXECUTE FUNCTION audit_item_changes();
+
+UPDATE public.item
+set stock = 55
+where id = 0;
